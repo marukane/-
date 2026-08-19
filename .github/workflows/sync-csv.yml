@@ -1,0 +1,49 @@
+# B案：CSVリネーム自動化
+# -----------------------------------------------------
+# 「incoming」フォルダに、Platioからダウンロードした元の名前のままのCSVを置くだけで、
+# 自動的に一番新しいものを data.csv としてコピー・コミットしてくれる仕組み。
+# 酒井社長がやることは「incomingフォルダにCSVをアップロードする」だけになる。
+#
+# 使い方：
+#   1. このファイルをリポジトリの .github/workflows/sync-csv.yml として追加する
+#   2. リポジトリに「incoming」という名前のフォルダを作る
+#      （空フォルダはGitHubに作れないので、incoming/.gitkeep のような空ファイルを1つ置くとよい）
+#   3. 以後は、Platioからダウンロードした業務日報CSV（元の名前のまま）を
+#      「Add file → Upload files」で incoming フォルダにアップロードするだけでOK
+#   4. 数十秒後、data.csv が自動更新される（Actionsタブで進行状況を確認できる）
+
+name: CSVを自動でdata.csvに反映
+
+on:
+  push:
+    paths:
+      - 'incoming/**.csv'
+
+permissions:
+  contents: write
+
+jobs:
+  sync-data-csv:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリを取得
+        uses: actions/checkout@v4
+
+      - name: incoming内の最新CSVをdata.csvにコピー
+        run: |
+          latest=$(ls -t incoming/*.csv | head -n 1)
+          echo "最新ファイル: $latest"
+          cp "$latest" data.csv
+          echo "LATEST_FILE=$latest" >> "$GITHUB_ENV"
+
+      - name: 変更をコミット・プッシュ
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.csv
+          if git diff --cached --quiet; then
+            echo "data.csvに変更なし"
+          else
+            git commit -m "自動更新: data.csv ← ${LATEST_FILE}"
+            git push
+          fi
