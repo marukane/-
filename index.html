@@ -44,6 +44,13 @@
   td.pct-cell { text-align: center !important; font-weight: bold; }
   h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
   .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+
+  /* 生産量／人工／生産性：3ブロックを縦に並べる（案2レイアウト） */
+  .metricBlockTitle {
+    font-size: 17px; font-weight: bold; background: #2f7d5c; color: #fff;
+    padding: 8px 14px; border-radius: 4px; margin-top: 36px; margin-bottom: 4px;
+  }
+  .metricArrow { text-align: center; font-size: 22px; color: #7cb342; margin: 6px 0; }
   #statusMsg { padding: 20px; font-size: 14px; color: #666; }
   canvas { max-width: 500px; }
 
@@ -79,6 +86,7 @@
     th, td { padding: 4px 4px; font-size: 11px; }
     th:first-child, td:first-child { white-space: normal; word-break: keep-all; max-width: 70px; }
     h2 { font-size: 14px; }
+    .metricBlockTitle { font-size: 14px; padding: 6px 10px; margin-top: 24px; }
   }
 </style>
 </head>
@@ -141,6 +149,12 @@ const CONFIG = {
   // 構造：MONTHLY_TARGETS['現場名']['YYYY-MM']['区分名'] = 計画値
   MONTHLY_TARGETS: {
     // '豊田市刈萱町': { '2026-07': { '伐倒': 50, '集材': 20, '造材': 80, '運搬': 40 } },
+  },
+
+  // 現場×月×区分ごとの人工の計画値。【要入力】実数値がまだないため空（MONTHLY_TARGETSと同じ構造）。
+  // 構造：MONTHLY_TARGETS_NINKU['現場名']['YYYY-MM']['区分名'] = 計画人工数
+  MONTHLY_TARGETS_NINKU: {
+    // '豊田市刈萱町': { '2026-07': { '伐倒': 6, '集材': 3, '造材': 10, '運搬': 5 } },
   },
 
   // 1人工あたりの標準労働時間（h）。【要確認】暫定値。
@@ -258,6 +272,8 @@ function emptySiteSummary() {
     cumulativeByCategory: {},
     monthlyByCategory: {},
     hoursByCategory: {},
+    recentWeekHoursByCategory: {}, // 直近1週間の労働時間（人工・生産性の週次表示用）
+    monthlyHoursByCategory: {},    // 月次の労働時間（人工・生産性の月次表示用）
   };
 }
 
@@ -294,11 +310,14 @@ function aggregate(entries) {
 
       if (e.date >= weekStartDate && e.date <= latestDate) {
         target.recentWeekByCategory[e.category] = (target.recentWeekByCategory[e.category] || 0) + e.volume;
+        target.recentWeekHoursByCategory[e.category] = (target.recentWeekHoursByCategory[e.category] || 0) + e.hours;
       }
 
       const ym = e.date.slice(0, 7);
       if (!target.monthlyByCategory[ym]) target.monthlyByCategory[ym] = {};
       target.monthlyByCategory[ym][e.category] = (target.monthlyByCategory[ym][e.category] || 0) + e.volume;
+      if (!target.monthlyHoursByCategory[ym]) target.monthlyHoursByCategory[ym] = {};
+      target.monthlyHoursByCategory[ym][e.category] = (target.monthlyHoursByCategory[ym][e.category] || 0) + e.hours;
     });
   });
 
@@ -309,6 +328,55 @@ function getMonthlyTarget(site, ym, category) {
   const siteTargets = CONFIG.MONTHLY_TARGETS[site];
   if (!siteTargets || !siteTargets[ym]) return 0;
   return siteTargets[ym][category] || 0;
+}
+
+function getMonthlyTargetNinku(site, ym, category) {
+  const siteTargets = CONFIG.MONTHLY_TARGETS_NINKU[site];
+  if (!siteTargets || !siteTargets[ym]) return 0;
+  return siteTargets[ym][category] || 0;
+}
+
+// 人工＝労働時間(h) ÷ 1人工あたり標準労働時間
+function ninkuFromHours(hours) {
+  return (hours || 0) / CONFIG.HOURS_PER_NINKU;
+}
+
+function round1(v) { return Math.round(v * 10) / 10; }
+function round2(v) { return Math.round(v * 100) / 100; }
+
+// 月次の人工実績（区分別）を、生産量と同じ { 'YYYY-MM': { 区分: 値 } } の形に変換する
+// ここでは丸めない生の値を返す（丸めは表示直前にrenderMetricBlock側で行う）。
+// 先にここで丸めてしまうと、生産性（生産量÷人工）の計算が丸め誤差を引きずってしまうため。
+function buildNinkuMonthlyActual(s) {
+  const result = {};
+  Object.keys(s.monthlyHoursByCategory).forEach(ym => {
+    result[ym] = {};
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      result[ym][cat] = ninkuFromHours((s.monthlyHoursByCategory[ym] && s.monthlyHoursByCategory[ym][cat]) || 0);
+    });
+  });
+  return result;
+}
+
+// 月次の生産性実績（区分別）＝ 生産量 ÷ 人工。人工が0の月は算出不能として0扱い。
+function buildProductivityMonthlyActual(monthlyVolume, monthlyNinku, monthKeys) {
+  const result = {};
+  monthKeys.forEach(ym => {
+    result[ym] = {};
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      const vol = (monthlyVolume[ym] && monthlyVolume[ym][cat]) || 0;
+      const ninku = (monthlyNinku[ym] && monthlyNinku[ym][cat]) || 0;
+      result[ym][cat] = ninku > 0 ? round2(vol / ninku) : 0;
+    });
+  });
+  return result;
+}
+
+// 生産性の月次計画＝生産量の計画 ÷ 人工の計画（人工計画が未設定の場合は算出しない）
+function getMonthlyTargetProductivity(site, ym, category) {
+  const volTarget = getMonthlyTarget(site, ym, category);
+  const ninkuTarget = getMonthlyTargetNinku(site, ym, category);
+  return ninkuTarget > 0 ? round2(volTarget / ninkuTarget) : 0;
 }
 
 // ============================================================
@@ -345,52 +413,55 @@ function showTab(name) {
 
 // 月次の計画・実績を集計し、区分ごとの累計進捗率も算出する
 // （7/14議事録モックアップ準拠：進捗率は月ごとではなく「合計」に対して1つだけ算出）
-function computeMonthlyTotals(name, s) {
-  const monthKeys = Object.keys(s.monthlyByCategory).sort();
+// monthlyActualByYm / targetFn を差し替えることで、生産量・人工・生産性のいずれにも使う
+function computeMonthlyTotals(name, monthKeys, monthlyActualByYm, targetFn) {
   const totals = {};
   CONFIG.PROGRESS_CATEGORIES.forEach(c => { totals[c] = { target: 0, actual: 0 }; });
   monthKeys.forEach(ym => {
     CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
-      const actual = s.monthlyByCategory[ym][cat] || 0;
-      const target = getMonthlyTarget(name, ym, cat);
+      const actual = (monthlyActualByYm[ym] && monthlyActualByYm[ym][cat]) || 0;
+      const target = targetFn(name, ym, cat);
       totals[cat].target += target;
       totals[cat].actual += actual;
     });
   });
-  return { monthKeys, totals };
+  return totals;
 }
 
-function renderSitePage(name, s) {
-  const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
-  let html = '<h2>' + name + '：直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
-  html += '<div class="note">データ最終更新日：' + (s.latestDate || '-') + '</div>';
-  html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
-  html += '<tr><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td class="num">' + (s.recentWeekByCategory[c] || 0) + '</td>').join('') + '</tr>';
-  html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<td class="num">' + (s.cumulativeByCategory[c] || 0) + '</td>').join('') + '</tr>';
-  html += '</table></div>';
+// 生産量／人工／生産性、共通の1ブロック（区分別実績表＋月次計画実績表＋進捗率バー）を描画する
+// 案2（2026/8/10打ち合わせで確定）：同じ表構成を3指標分、縦に並べる
+function renderMetricBlock(name, s, opts) {
+  let html = '<div class="metricBlockTitle">' + opts.title + '</div>';
 
-  html += '<h2>参考（進捗集計には含まない）</h2>';
-  html += '<div class="table-scroll"><table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
-  ['切り捨て伐倒', 'その他作業'].forEach(cat => {
-    html += '<tr><td>' + cat + '</td><td class="num">' + (s.cumulativeByCategory[cat] || 0) + '</td><td class="num">' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
-  });
+  const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
+  html += '<h2>直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
+  html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+  html += '<tr><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
+    const v = opts.weeklyFn(c);
+    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
+  }).join('') + '</tr>';
+  html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
+    const v = opts.cumulativeFn(c);
+    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
+  }).join('') + '</tr>';
   html += '</table></div>';
 
   // --- 月次 計画／実績（横長表：7/14議事録モックアップ準拠） ---
-  const { monthKeys, totals } = computeMonthlyTotals(name, s);
+  const monthKeys = Object.keys(opts.monthlyActualByYm).sort();
+  const totals = computeMonthlyTotals(name, monthKeys, opts.monthlyActualByYm, opts.targetFn);
   html += '<h2>月次 計画／実績</h2>';
   html += '<div class="table-scroll"><table>';
   html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
   html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
   monthKeys.forEach(ym => {
     html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
-      const actual = s.monthlyByCategory[ym][cat] || 0;
-      const target = getMonthlyTarget(name, ym, cat);
-      return '<td class="num">' + target + '</td><td class="num">' + actual + '</td>';
+      const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
+      const target = opts.targetFn(name, ym, cat);
+      return '<td class="num">' + opts.round(target) + '</td><td class="num">' + opts.round(actual) + '</td>';
     }).join('') + '</tr>';
   });
   html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
-    '<td class="num"><strong>' + totals[cat].target + '</strong></td><td class="num"><strong>' + totals[cat].actual + '</strong></td>'
+    '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
   ).join('') + '</tr>';
   // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
   html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
@@ -413,13 +484,66 @@ function renderSitePage(name, s) {
       '</div>';
   });
 
-  const totalVolume = Object.values(s.cumulativeByCategory).reduce((a, b) => a + b, 0);
-  const totalHours = Object.values(s.hoursByCategory).reduce((a, b) => a + b, 0);
-  const ninku = totalHours / CONFIG.HOURS_PER_NINKU;
-  const productivity = ninku > 0 ? Math.round((totalVolume / ninku) * 100) / 100 : 0;
-  html += '<h2>生産量／人工／生産性（累計・全区分合算）</h2>';
-  html += '<div class="table-scroll"><table><tr><th>生産量(㎥)</th><th>人工</th><th>生産性(㎥/人工)</th></tr>';
-  html += '<tr><td class="num">' + totalVolume + '</td><td class="num">' + (Math.round(ninku * 10) / 10) + '</td><td class="num">' + productivity + '</td></tr></table></div>';
+  return html;
+}
+
+function renderSitePage(name, s) {
+  const monthKeys = Object.keys(s.monthlyByCategory).sort();
+  const ninkuMonthlyActual = buildNinkuMonthlyActual(s);
+  const productivityMonthlyActual = buildProductivityMonthlyActual(s.monthlyByCategory, ninkuMonthlyActual, monthKeys);
+
+  let html = '<h2>' + name + '：現場実績</h2>';
+  html += '<div class="note">データ最終更新日：' + (s.latestDate || '-') + '</div>';
+
+  // --- 生産量（案2：3ブロック構成の1つ目） ---
+  html += renderMetricBlock(name, s, {
+    title: '生産量（㎥）',
+    weeklyFn: cat => s.recentWeekByCategory[cat] || 0,
+    cumulativeFn: cat => s.cumulativeByCategory[cat] || 0,
+    monthlyActualByYm: s.monthlyByCategory,
+    targetFn: getMonthlyTarget,
+    round: v => v,
+  });
+
+  html += '<div class="metricArrow">↓</div>';
+
+  // --- 人工（＝労働時間 ÷ 8。業務日報集計表_20260312.xlsxの計算式を踏襲） ---
+  html += renderMetricBlock(name, s, {
+    title: '人工',
+    weeklyFn: cat => round1(ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0)),
+    cumulativeFn: cat => round1(ninkuFromHours(s.hoursByCategory[cat] || 0)),
+    monthlyActualByYm: ninkuMonthlyActual,
+    targetFn: getMonthlyTargetNinku,
+    round: round1,
+  });
+
+  html += '<div class="metricArrow">↓</div>';
+
+  // --- 生産性（＝生産量 ÷ 人工。人工が0の期間は「-」表示） ---
+  html += renderMetricBlock(name, s, {
+    title: '生産性（㎥／人工）',
+    weeklyFn: cat => {
+      const vol = s.recentWeekByCategory[cat] || 0;
+      const ninku = ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0);
+      return ninku > 0 ? round2(vol / ninku) : null;
+    },
+    cumulativeFn: cat => {
+      const vol = s.cumulativeByCategory[cat] || 0;
+      const ninku = ninkuFromHours(s.hoursByCategory[cat] || 0);
+      return ninku > 0 ? round2(vol / ninku) : null;
+    },
+    monthlyActualByYm: productivityMonthlyActual,
+    targetFn: getMonthlyTargetProductivity,
+    round: round2,
+  });
+
+  // --- 参考：進捗集計には含まない区分（切り捨て伐倒／その他作業） ---
+  html += '<h2>参考（進捗集計には含まない）</h2>';
+  html += '<div class="table-scroll"><table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
+  ['切り捨て伐倒', 'その他作業'].forEach(cat => {
+    html += '<tr><td>' + cat + '</td><td class="num">' + (s.cumulativeByCategory[cat] || 0) + '</td><td class="num">' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
+  });
+  html += '</table></div>';
 
   return html;
 }
@@ -441,4 +565,3 @@ function renderExecutivePage(overall) {
 
 </body>
 </html>
-
