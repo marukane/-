@@ -222,10 +222,23 @@ async function loadDashboard() {
   }
 }
 
+// CSVの日付表記のゆれ（2026/8/20 のようなスラッシュ区切り・0埋めなしなど）を
+// 'YYYY-MM-DD'（0埋めあり）の統一形式に変換する。変換できない値はnullを返す。
+function normalizeDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (!m) return null;
+  const y = m[1];
+  const mo = m[2].padStart(2, '0');
+  const d = m[3].padStart(2, '0');
+  return y + '-' + mo + '-' + d;
+}
+
 function buildEntries(rows) {
   const entries = [];
   rows.forEach(row => {
-    const date = row['日付'];
+    const date = normalizeDate(row['日付']);
     if (!date) return;
     if (row['①作業内容']) {
       entries.push(makeEntry(
