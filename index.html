@@ -482,42 +482,60 @@ function renderMetricBlock(name, s, opts) {
   // --- 月次 計画／実績（横長表：7/14議事録モックアップ準拠） ---
   // 表示する月は年度（CONFIG.FISCAL_YEAR_START_YM〜FISCAL_YEAR_END_YM）で固定し、
   // それ以外の月にデータがあっても表には出さない。
+  // 「全体」タブは現場ごとの計画値がまだ揃っていないため、計画列・進捗率は表示せず実績のみ表示する。
+  const showTargets = name !== '全体';
   const monthKeys = generateFiscalYearMonths();
   const totals = computeMonthlyTotals(name, monthKeys, opts.monthlyActualByYm, opts.targetFn);
-  html += '<h2>月次 計画／実績</h2>';
+  html += '<h2>' + (showTargets ? '月次 計画／実績' : '月次 実績') + '</h2>';
   html += '<div class="table-scroll"><table>';
-  html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
-  html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
-  monthKeys.forEach(ym => {
-    html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
-      const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
-      const target = opts.targetFn(name, ym, cat);
-      return '<td class="num">' + opts.round(target) + '</td><td class="num">' + opts.round(actual) + '</td>';
+  if (showTargets) {
+    html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
+    html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
+    monthKeys.forEach(ym => {
+      html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+        const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
+        const target = opts.targetFn(name, ym, cat);
+        return '<td class="num">' + opts.round(target) + '</td><td class="num">' + opts.round(actual) + '</td>';
+      }).join('') + '</tr>';
+    });
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
+      '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
+    ).join('') + '</tr>';
+    // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
+    html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+      const pct = totals[cat].target > 0 ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : null;
+      return '<td colspan="2" class="pct-cell">' + (pct === null ? '-' : pct + '%') + '</td>';
     }).join('') + '</tr>';
-  });
-  html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
-    '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
-  ).join('') + '</tr>';
-  // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
-  html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
-    const pct = totals[cat].target > 0 ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : null;
-    return '<td colspan="2" class="pct-cell">' + (pct === null ? '-' : pct + '%') + '</td>';
-  }).join('') + '</tr>';
+  } else {
+    html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+    monthKeys.forEach(ym => {
+      html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+        const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
+        return '<td class="num">' + opts.round(actual) + '</td>';
+      }).join('') + '</tr>';
+    });
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
+      '<td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
+    ).join('') + '</tr>';
+  }
   html += '</table></div>';
 
   // --- 進捗率バー（区分ごとに個別ボックス：モックアップ準拠） ---
-  html += '<h2>進捗率（累計・区分別）</h2>';
-  CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
-    const hasTarget = totals[cat].target > 0;
-    const pct = hasTarget ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : 0;
-    const widthPct = Math.min(pct, 100);
-    const overClass = pct >= 100 ? ' over' : '';
-    html += '<div class="progressRow">' +
-      '<div class="progressLabel">' + cat + '</div>' +
-      '<div class="progressBarWrap"><div class="progressBarFill' + overClass + '" style="width:' + widthPct + '%"></div>' +
-      '<span class="progressPctLabel">' + (hasTarget ? pct + '%' : '計画未設定') + '</span></div>' +
-      '</div>';
-  });
+  // 計画値のない「全体」タブでは、進捗率バーも意味を持たないため表示しない。
+  if (showTargets) {
+    html += '<h2>進捗率（累計・区分別）</h2>';
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      const hasTarget = totals[cat].target > 0;
+      const pct = hasTarget ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : 0;
+      const widthPct = Math.min(pct, 100);
+      const overClass = pct >= 100 ? ' over' : '';
+      html += '<div class="progressRow">' +
+        '<div class="progressLabel">' + cat + '</div>' +
+        '<div class="progressBarWrap"><div class="progressBarFill' + overClass + '" style="width:' + widthPct + '%"></div>' +
+        '<span class="progressPctLabel">' + (hasTarget ? pct + '%' : '計画未設定') + '</span></div>' +
+        '</div>';
+    });
+  }
 
   return html;
 }
