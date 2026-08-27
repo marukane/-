@@ -42,6 +42,7 @@
   th:first-child, td:first-child { text-align: left; }
   td.num { text-align: right !important; }
   td.pct-cell { text-align: center !important; font-weight: bold; }
+  tr.weekRow td, tr.weekRow th { background: #fff3b0; }
   h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
   .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
 
@@ -424,7 +425,7 @@ function getMonthlyTargetProductivity(site, ym, category) {
 function buildTabs() {
   const nav = document.getElementById('tabNav');
   nav.innerHTML = '';
-  const names = ['全体', ...CONFIG.SITES, '経営者ページ'];
+  const names = ['全体', ...CONFIG.SITES, '年間累計'];
   names.forEach(name => {
     const btn = document.createElement('button');
     btn.textContent = name;
@@ -440,7 +441,7 @@ function showTab(name) {
   if (activeBtn) activeBtn.classList.add('active');
 
   const el = document.getElementById('tabContent');
-  if (name === '経営者ページ') {
+  if (name === '年間累計') {
     el.innerHTML = renderExecutivePage(SUMMARY.overall);
   } else if (name === '全体') {
     el.innerHTML = renderSitePage('全体', SUMMARY.overall);
@@ -475,7 +476,7 @@ function renderMetricBlock(name, s, opts) {
   const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
   html += '<h2>直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
   html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
-  html += '<tr><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
+  html += '<tr class="weekRow"><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
     const v = opts.weeklyFn(c);
     return '<td class="num">' + (v === null ? '-' : v) + '</td>';
   }).join('') + '</tr>';
@@ -611,7 +612,7 @@ function renderExecutivePage(overall) {
   const actual = overall.cumulativeByCategory[CONFIG.ANNUAL_TARGET_CATEGORY] || 0;
   const target = CONFIG.ANNUAL_TARGET_M3;
   const pct = target > 0 ? Math.round((actual / target) * 1000) / 10 : 0;
-  let html = '<h2>経営者ページ：年間目標の進捗</h2>';
+  let html = '<h2>年間累計：年間目標の進捗</h2>';
   html += '<div class="note">【留意点】伐倒・集材・造材・運搬は同じ木の工程のため単純合算できません。' +
     'この進捗は「運搬（＝搬出量）」区分の累計を代理指標として使っています。' +
     '集計ルールの是非は酒井社長の確認待ちです。</div>';
