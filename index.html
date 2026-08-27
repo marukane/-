@@ -268,7 +268,13 @@ function buildEntries(rows) {
   return entries;
 }
 
-function makeEntry(date, site, categoryRaw, volumeStr, hoursMsStr) {
+// 作業時間の列は「4時間」のように、すでに時間(h)単位の数値が文字列で入っている。
+// parseFloatは先頭の数字部分だけを読み取るので「時間」の文字はそのまま無視できる。
+function parseHoursField(raw) {
+  return parseFloat(raw) || 0;
+}
+
+function makeEntry(date, site, categoryRaw, volumeStr, hoursStr) {
   const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
   return {
     date: date,
@@ -276,7 +282,7 @@ function makeEntry(date, site, categoryRaw, volumeStr, hoursMsStr) {
     categoryRaw: categoryRaw,
     category: category,
     volume: parseFloat(volumeStr) || 0,
-    hours: (parseFloat(hoursMsStr) || 0) / 3600000,
+    hours: parseHoursField(hoursStr),
   };
 }
 
