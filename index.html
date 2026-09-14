@@ -366,7 +366,11 @@ function ninkuFromHours(hours) {
   return (hours || 0) / CONFIG.HOURS_PER_NINKU;
 }
 
-function round1(v) { return Math.round(v * 10) / 10; }
+// 割り切れる数字はそのまま、割り切れない数字は小数点第2位までに丸めて表示する。
+// （例：4 → 4、4.75 → 4.75、4.756 → 4.76）
+function roundDisplay(v) {
+  return Math.round(v * 100) / 100;
+}
 function round2(v) { return Math.round(v * 100) / 100; }
 
 // CONFIG.FISCAL_YEAR_START_YM 〜 FISCAL_YEAR_END_YM の範囲の 'YYYY-MM' を順番に並べた配列を作る。
@@ -511,7 +515,7 @@ function renderMetricBlock(name, s, opts) {
     ).join('') + '</tr>';
     // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
     html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
-      const pct = totals[cat].target > 0 ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : null;
+      const pct = totals[cat].target > 0 ? roundDisplay((totals[cat].actual / totals[cat].target) * 100) : null;
       return '<td colspan="2" class="pct-cell">' + (pct === null ? '-' : pct + '%') + '</td>';
     }).join('') + '</tr>';
   } else {
@@ -534,7 +538,7 @@ function renderMetricBlock(name, s, opts) {
     html += '<h2>進捗率（累計・区分別）</h2>';
     CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
       const hasTarget = totals[cat].target > 0;
-      const pct = hasTarget ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : 0;
+      const pct = hasTarget ? roundDisplay((totals[cat].actual / totals[cat].target) * 100) : 0;
       const widthPct = Math.min(pct, 100);
       const overClass = pct >= 100 ? ' over' : '';
       html += '<div class="progressRow">' +
@@ -559,11 +563,11 @@ function renderSitePage(name, s) {
   // --- 生産量（案2：3ブロック構成の1つ目） ---
   html += renderMetricBlock(name, s, {
     title: '生産量（㎥）',
-    weeklyFn: cat => s.recentWeekByCategory[cat] || 0,
-    cumulativeFn: cat => s.cumulativeByCategory[cat] || 0,
+    weeklyFn: cat => roundDisplay(s.recentWeekByCategory[cat] || 0),
+    cumulativeFn: cat => roundDisplay(s.cumulativeByCategory[cat] || 0),
     monthlyActualByYm: s.monthlyByCategory,
     targetFn: getMonthlyTarget,
-    round: v => v,
+    round: roundDisplay,
   });
 
   html += '<div class="metricArrow">↓</div>';
@@ -571,11 +575,11 @@ function renderSitePage(name, s) {
   // --- 人工（＝労働時間 ÷ 8。業務日報集計表_20260312.xlsxの計算式を踏襲） ---
   html += renderMetricBlock(name, s, {
     title: '人工',
-    weeklyFn: cat => round1(ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0)),
-    cumulativeFn: cat => round1(ninkuFromHours(s.hoursByCategory[cat] || 0)),
+    weeklyFn: cat => roundDisplay(ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0)),
+    cumulativeFn: cat => roundDisplay(ninkuFromHours(s.hoursByCategory[cat] || 0)),
     monthlyActualByYm: ninkuMonthlyActual,
     targetFn: getMonthlyTargetNinku,
-    round: round1,
+    round: roundDisplay,
   });
 
   html += '<div class="metricArrow">↓</div>';
@@ -586,23 +590,23 @@ function renderSitePage(name, s) {
     weeklyFn: cat => {
       const vol = s.recentWeekByCategory[cat] || 0;
       const ninku = ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0);
-      return ninku > 0 ? round2(vol / ninku) : null;
+      return ninku > 0 ? roundDisplay(vol / ninku) : null;
     },
     cumulativeFn: cat => {
       const vol = s.cumulativeByCategory[cat] || 0;
       const ninku = ninkuFromHours(s.hoursByCategory[cat] || 0);
-      return ninku > 0 ? round2(vol / ninku) : null;
+      return ninku > 0 ? roundDisplay(vol / ninku) : null;
     },
     monthlyActualByYm: productivityMonthlyActual,
     targetFn: getMonthlyTargetProductivity,
-    round: round2,
+    round: roundDisplay,
   });
 
   // --- 参考：進捗集計には含まない区分（切り捨て伐倒／その他作業） ---
   html += '<h2>参考（進捗集計には含まない）</h2>';
   html += '<div class="table-scroll"><table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
   ['切り捨て伐倒', 'その他作業'].forEach(cat => {
-    html += '<tr><td>' + cat + '</td><td class="num">' + (s.cumulativeByCategory[cat] || 0) + '</td><td class="num">' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
+    html += '<tr><td>' + cat + '</td><td class="num">' + roundDisplay(s.cumulativeByCategory[cat] || 0) + '</td><td class="num">' + roundDisplay(s.hoursByCategory[cat] || 0) + '</td></tr>';
   });
   html += '</table></div>';
 
@@ -612,13 +616,13 @@ function renderSitePage(name, s) {
 function renderExecutivePage(overall) {
   const actual = overall.cumulativeByCategory[CONFIG.ANNUAL_TARGET_CATEGORY] || 0;
   const target = CONFIG.ANNUAL_TARGET_M3;
-  const pct = target > 0 ? Math.round((actual / target) * 1000) / 10 : 0;
+  const pct = target > 0 ? roundDisplay((actual / target) * 100) : 0;
   let html = '<h2>年間累計：年間目標の進捗</h2>';
   html += '<div class="note">【留意点】伐倒・集材・造材・運搬は同じ木の工程のため単純合算できません。' +
     'この進捗は「運搬（＝搬出量）」区分の累計を代理指標として使っています。' +
     '集計ルールの是非は酒井社長の確認待ちです。</div>';
   html += '<table><tr><th>年間目標(㎥)</th><th>累計実績(㎥・搬出量ベース)</th><th>進捗率(%)</th></tr>';
-  html += '<tr><td class="num">' + target + '</td><td class="num">' + actual + '</td><td class="num">' + pct + '</td></tr></table>';
+  html += '<tr><td class="num">' + roundDisplay(target) + '</td><td class="num">' + roundDisplay(actual) + '</td><td class="num">' + pct + '</td></tr></table>';
   return html;
 }
 
