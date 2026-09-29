@@ -1,29 +1,563 @@
-) + '</td><td class="num">' + opts.round(actual) + '</td>';
-    }).join('') + '</tr>';
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>丸兼林業 現場ダッシュボード（検証用・B案）</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", sans-serif; margin: 0; color: #222; }
+
+  /* --- パスワードゲート --- */
+  #lockScreen {
+    height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: #2f4f3f; color: #fff;
+  }
+  #lockScreen input {
+    padding: 10px; font-size: 16px; width: 220px; border-radius: 4px; border: none; margin-top: 12px;
+  }
+  #lockScreen button {
+    padding: 10px 20px; font-size: 16px; margin-top: 12px; border-radius: 4px; border: none;
+    background: #7cb342; color: #fff; cursor: pointer;
+  }
+  #errorMsg { color: #ffb3b3; margin-top: 8px; height: 20px; }
+
+  /* --- ダッシュボード本体 --- */
+  #content { display: none; }
+  header.topbar {
+    background: #2f4f3f; color: #fff; padding: 16px 20px;
+  }
+  header.topbar h1 { margin: 0; font-size: 20px; }
+  #tabNav {
+    display: flex; flex-wrap: wrap; background: #eef2ee; border-bottom: 1px solid #ccc;
+  }
+  #tabNav button {
+    padding: 12px 16px; border: none; background: none; cursor: pointer; font-size: 14px;
+  }
+  #tabNav button.active { background: #fff; font-weight: bold; border-bottom: 3px solid #7cb342; }
+  #tabContent { padding: 16px; max-width: 900px; margin: 0 auto; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: right; font-size: 13px; white-space: nowrap; }
+  th { text-align: center; background: #f7f9f7; }
+  th:first-child, td:first-child { text-align: left; }
+  td.num { text-align: right !important; }
+  td.pct-cell { text-align: center !important; font-weight: bold; }
+  tr.weekRow td, tr.weekRow th { background: #fff3b0; }
+  h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
+  .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
+
+  /* 生産量／人工／生産性：3ブロックを縦に並べる（案2レイアウト） */
+  .metricBlockTitle {
+    font-size: 17px; font-weight: bold; background: #2f7d5c; color: #fff;
+    padding: 8px 14px; border-radius: 4px; margin-top: 36px; margin-bottom: 4px;
+  }
+  .metricArrow { text-align: center; font-size: 22px; color: #7cb342; margin: 6px 0; }
+  #statusMsg { padding: 20px; font-size: 14px; color: #666; }
+  canvas { max-width: 500px; }
+
+  /* スマホでも表がはみ出さないよう横スクロール可能にする */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 20px; border-radius: 4px; }
+  .table-scroll table { margin-bottom: 0; min-width: 480px; }
+
+  /* 区分ごとの進捗バー（モックアップの4区分・個別ボックス形式） */
+  .progressRow {
+    display: flex; align-items: stretch; border: 1px solid #ddd; border-radius: 4px;
+    margin-bottom: 10px; overflow: hidden;
+  }
+  .progressLabel {
+    width: 64px; flex-shrink: 0; background: #eef2ee; display: flex; align-items: center;
+    justify-content: center; font-weight: bold; font-size: 13px; text-align: center; padding: 4px;
+  }
+  .progressBarWrap {
+    flex: 1; position: relative; margin: 10px; height: 28px; background: #f0f0f0; border-radius: 4px; overflow: hidden;
+  }
+  .progressBarFill { height: 100%; background: #2f7d5c; transition: width 0.3s; }
+  .progressBarFill.over { background: #e08a2b; }
+  .progressPctLabel {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    font-size: 12px; font-weight: bold; color: #222;
+  }
+
+  @media (max-width: 480px) {
+    header.topbar h1 { font-size: 16px; }
+    #tabNav button { padding: 10px 10px; font-size: 12px; }
+    #tabContent { padding: 10px; }
+    .progressLabel { width: 52px; font-size: 12px; }
+    /* 4区分だけの表（直近1週間実績・累計実績・参考）は横スクロールなしで収まるよう詰める */
+    th, td { padding: 4px 4px; font-size: 11px; }
+    th:first-child, td:first-child { white-space: normal; word-break: keep-all; max-width: 70px; }
+    h2 { font-size: 14px; }
+    .metricBlockTitle { font-size: 14px; padding: 6px 10px; margin-top: 24px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="lockScreen">
+  <h2>丸兼林業 現場ダッシュボード（検証用）</h2>
+  <input type="password" id="pwInput" placeholder="パスワードを入力">
+  <button onclick="checkPassword()">開く</button>
+  <div id="errorMsg"></div>
+</div>
+
+<div id="content">
+  <header class="topbar"><h1>丸兼林業 現場ダッシュボード（検証用・B案）</h1></header>
+  <div id="tabNav"></div>
+  <div id="tabContent"><div id="statusMsg">データを読み込み中...</div></div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG：目標値・区分マッピングなど「変わりうる値」はすべてここに集約する
+// （A案 Apps Script版と同じ設計方針。値を変える場合はここだけ直せばよい）
+// ============================================================
+const CONFIG = {
+  CSV_PATH: 'data.csv', // 同じリポジトリに置くCSVファイル名（更新時はこのファイルを差し替える）
+
+  SITES: [
+    '設楽町段戸国有林',
+    '豊田市苅萱町',
+    '豊田市黒田町',
+    '豊田市平岩町',
+    'その他',
+    '豊田市大洞町',
+    '御内市有林',
+  ],
+
+  PROGRESS_CATEGORIES: ['伐倒', '集材', '造材', '運搬'],
+
+  // 【暫定ルール・要確認】切り捨て伐倒は進捗集計から除外し別枠表示（人工は生産性計算に含める）。
+  // その他（林内/林外作業）・作業道作設・機械修理は「その他作業」に一括（進捗集計対象外）。
+  // → 酒井社長との合意待ち。次回ミーティングで要相談。
+  CATEGORY_MAP: {
+    '伐倒': '伐倒',
+    '集材': '集材',
+    '造材': '造材',
+    '運搬': '運搬',
+    'フォワーダー運搬': '運搬',
+    '切り捨て伐倒': '切り捨て伐倒',
+    'その他（林内作業）': 'その他作業',
+    'その他（林外作業）': 'その他作業',
+    '作業道作設': 'その他作業',
+    '機械修理': 'その他作業',
+  },
+
+  // 【重要・未解決】伐倒・集材・造材・運搬は同じ木の工程のため単純合算はできない。
+  // 年間目標4,500㎥の進捗は「運搬（＝搬出量）」の累計を代理指標として使う（酒井社長の最終確認待ち）。
+  ANNUAL_TARGET_M3: 4500,
+  ANNUAL_TARGET_CATEGORY: '運搬',
+
+  // 現場×月×区分ごとの計画値（㎥）。【要入力】実数値がまだないため空。
+  // 構造：MONTHLY_TARGETS['現場名']['YYYY-MM']['区分名'] = 計画値
+  MONTHLY_TARGETS: {
+    '豊田市苅萱町': {
+      '2026-08': { '伐倒': 50, '集材': 20, '造材': 50, '運搬': 50 },
+      '2026-09': { '伐倒': 100, '集材': 50, '造材': 150, '運搬': 150 },
+    },
+    '御内市有林': {
+      '2026-09': { '伐倒': 100, '集材': 30, '造材': 50, '運搬': 50 },
+      '2026-10': { '伐倒': 300, '集材': 150, '造材': 300, '運搬': 300 },
+    },
+    '設楽町段戸国有林': {
+      '2026-10': { '伐倒': 100, '集材': 30, '造材': 50, '運搬': 50 },
+    },
+  },
+
+  // 現場×月×区分ごとの人工の計画値。【要入力】実数値がまだないため空（MONTHLY_TARGETSと同じ構造）。
+  // 構造：MONTHLY_TARGETS_NINKU['現場名']['YYYY-MM']['区分名'] = 計画人工数
+  MONTHLY_TARGETS_NINKU: {
+    // '豊田市苅萱町': { '2026-07': { '伐倒': 6, '集材': 3, '造材': 10, '運搬': 5 } },
+  },
+
+  // 1人工あたりの標準労働時間（h）。【要確認】暫定値。
+  HOURS_PER_NINKU: 8,
+
+  // 「月次 計画／実績」表に表示する年度の範囲（この期間だけを表示し、それ以外の月は表示しない）
+  FISCAL_YEAR_START_YM: '2026-05',
+  FISCAL_YEAR_END_YM: '2027-04',
+
+  // パスワードのSHA-256ハッシュ（平文パスワードは書かない）。
+  CORRECT_HASH: '98964da49d0a98402ed3d2d37b3350cf0aa346f522f8f1feb6b01cd680bc9455',
+};
+
+// ============================================================
+// パスワードゲート
+// ============================================================
+async function sha256(text) {
+  const data = new TextEncoder().encode(text);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function checkPassword() {
+  const input = document.getElementById('pwInput').value;
+  const hash = await sha256(input);
+  if (hash === CONFIG.CORRECT_HASH) {
+    sessionStorage.setItem('unlocked', 'yes');
+    unlock();
+  } else {
+    document.getElementById('errorMsg').textContent = 'パスワードが違います';
+  }
+}
+
+function unlock() {
+  document.getElementById('lockScreen').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+  loadDashboard();
+}
+
+window.onload = function () {
+  if (sessionStorage.getItem('unlocked') === 'yes') {
+    unlock();
+  }
+};
+
+// ============================================================
+// データ読み込み・集計（A案 Apps Script版と同じロジック）
+// ============================================================
+let SUMMARY = null; // { overall, bySite } を1回だけ計算してキャッシュ
+
+async function loadDashboard() {
+  try {
+    const res = await fetch(CONFIG.CSV_PATH, { cache: 'no-store' });
+    if (!res.ok) throw new Error('data.csvが見つかりません');
+    let text = await res.text();
+    text = text.replace(/^﻿/, ''); // BOM除去
+
+    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+    const rows = parsed.data;
+    const entries = buildEntries(rows);
+    SUMMARY = aggregate(entries);
+
+    buildTabs();
+    showTab('全体');
+  } catch (err) {
+    document.getElementById('tabContent').innerHTML =
+      '<div id="statusMsg">データの読み込みに失敗しました：' + err.message +
+      '<br>data.csvがこのリポジトリのルートに置かれているか確認してください。</div>';
+  }
+}
+
+// CSVの日付表記のゆれ（2026/8/20 のようなスラッシュ区切り・0埋めなしなど）を
+// 'YYYY-MM-DD'（0埋めあり）の統一形式に変換する。変換できない値はnullを返す。
+function normalizeDate(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  const m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (!m) return null;
+  const y = m[1];
+  const mo = m[2].padStart(2, '0');
+  const d = m[3].padStart(2, '0');
+  return y + '-' + mo + '-' + d;
+}
+
+function buildEntries(rows) {
+  const entries = [];
+  rows.forEach(row => {
+    const date = normalizeDate(row['日付']);
+    if (!date) return;
+    if (row['①作業内容']) {
+      entries.push(makeEntry(
+        date,
+        row['現場名'] || row['現場名（記入）'],
+        row['①作業内容'],
+        row['①材積（㎥)'] || row['①材積（㎥）'],
+        row['①作業時間']
+      ));
+    }
+    // 「2つ目の作業あり」がfalseでも②作業内容が入っているケースが実データに存在するため、
+    // フラグではなく②作業内容の有無で判定する
+    if (row['②作業内容']) {
+      entries.push(makeEntry(
+        date,
+        row['現場名2'] || row['現場名(記入)'],
+        row['②作業内容'],
+        row['②材積（㎥）'],
+        row['②作業時間']
+      ));
+    }
   });
-  html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
-    '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
-  ).join('') + '</tr>';
-  // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
-  html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
-    const pct = totals[cat].target > 0 ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : null;
-    return '<td colspan="2" class="pct-cell">' + (pct === null ? '-' : pct + '%') + '</td>';
+  return entries;
+}
+
+// 作業時間の列は「4時間」のように、すでに時間(h)単位の数値が文字列で入っている。
+// parseFloatは先頭の数字部分だけを読み取るので「時間」の文字はそのまま無視できる。
+function parseHoursField(raw) {
+  return parseFloat(raw) || 0;
+}
+
+function makeEntry(date, site, categoryRaw, volumeStr, hoursStr) {
+  const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
+  return {
+    date: date,
+    site: site || '(不明)',
+    categoryRaw: categoryRaw,
+    category: category,
+    volume: parseFloat(volumeStr) || 0,
+    hours: parseHoursField(hoursStr),
+  };
+}
+
+function emptySiteSummary() {
+  return {
+    latestDate: null,
+    weekStartDate: null,
+    weekEndDate: null,
+    recentWeekByCategory: {}, // 【週次更新前提】直近1週間分の実績（旧：前日実績）
+    cumulativeByCategory: {},
+    monthlyByCategory: {},
+    hoursByCategory: {},
+    recentWeekHoursByCategory: {}, // 直近1週間の労働時間（人工・生産性の週次表示用）
+    monthlyHoursByCategory: {},    // 月次の労働時間（人工・生産性の月次表示用）
+  };
+}
+
+// 'YYYY-MM-DD' の文字列からdays日前の日付文字列を返す
+function subtractDays(dateStr, days) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function aggregate(entries) {
+  const bySite = {};
+  CONFIG.SITES.forEach(s => { bySite[s] = emptySiteSummary(); });
+  const overall = emptySiteSummary();
+
+  if (entries.length === 0) return { overall, bySite };
+
+  // 【週次更新前提】「前日実績」ではなく、データ最終日を含む直近7日間を1つの更新分として扱う
+  const latestDate = entries.reduce((max, e) => (e.date > max ? e.date : max), entries[0].date);
+  const weekStartDate = subtractDays(latestDate, 6);
+  overall.latestDate = latestDate;
+  overall.weekStartDate = weekStartDate;
+  overall.weekEndDate = latestDate;
+
+  entries.forEach(e => {
+    if (!bySite[e.site]) bySite[e.site] = emptySiteSummary();
+    [bySite[e.site], overall].forEach(target => {
+      target.latestDate = latestDate;
+      target.weekStartDate = weekStartDate;
+      target.weekEndDate = latestDate;
+
+      target.cumulativeByCategory[e.category] = (target.cumulativeByCategory[e.category] || 0) + e.volume;
+      target.hoursByCategory[e.category] = (target.hoursByCategory[e.category] || 0) + e.hours;
+
+      if (e.date >= weekStartDate && e.date <= latestDate) {
+        target.recentWeekByCategory[e.category] = (target.recentWeekByCategory[e.category] || 0) + e.volume;
+        target.recentWeekHoursByCategory[e.category] = (target.recentWeekHoursByCategory[e.category] || 0) + e.hours;
+      }
+
+      const ym = e.date.slice(0, 7);
+      if (!target.monthlyByCategory[ym]) target.monthlyByCategory[ym] = {};
+      target.monthlyByCategory[ym][e.category] = (target.monthlyByCategory[ym][e.category] || 0) + e.volume;
+      if (!target.monthlyHoursByCategory[ym]) target.monthlyHoursByCategory[ym] = {};
+      target.monthlyHoursByCategory[ym][e.category] = (target.monthlyHoursByCategory[ym][e.category] || 0) + e.hours;
+    });
+  });
+
+  return { overall, bySite };
+}
+
+function getMonthlyTarget(site, ym, category) {
+  const siteTargets = CONFIG.MONTHLY_TARGETS[site];
+  if (!siteTargets || !siteTargets[ym]) return 0;
+  return siteTargets[ym][category] || 0;
+}
+
+function getMonthlyTargetNinku(site, ym, category) {
+  const siteTargets = CONFIG.MONTHLY_TARGETS_NINKU[site];
+  if (!siteTargets || !siteTargets[ym]) return 0;
+  return siteTargets[ym][category] || 0;
+}
+
+// 人工＝労働時間(h) ÷ 1人工あたり標準労働時間
+function ninkuFromHours(hours) {
+  return (hours || 0) / CONFIG.HOURS_PER_NINKU;
+}
+
+// 割り切れる数字はそのまま、割り切れない数字は小数点第2位までに丸めて表示する。
+// （例：4 → 4、4.75 → 4.75、4.756 → 4.76）
+function roundDisplay(v) {
+  return Math.round(v * 100) / 100;
+}
+function round2(v) { return Math.round(v * 100) / 100; }
+
+// CONFIG.FISCAL_YEAR_START_YM 〜 FISCAL_YEAR_END_YM の範囲の 'YYYY-MM' を順番に並べた配列を作る。
+// 「月次 計画／実績」表は、データの有無に関わらずこの年度の月だけを表示する。
+function generateFiscalYearMonths() {
+  const months = [];
+  let y = parseInt(CONFIG.FISCAL_YEAR_START_YM.slice(0, 4), 10);
+  let m = parseInt(CONFIG.FISCAL_YEAR_START_YM.slice(5, 7), 10);
+  const endY = parseInt(CONFIG.FISCAL_YEAR_END_YM.slice(0, 4), 10);
+  const endM = parseInt(CONFIG.FISCAL_YEAR_END_YM.slice(5, 7), 10);
+  while (y < endY || (y === endY && m <= endM)) {
+    months.push(y + '-' + String(m).padStart(2, '0'));
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return months;
+}
+
+// 月次の人工実績（区分別）を、生産量と同じ { 'YYYY-MM': { 区分: 値 } } の形に変換する
+// ここでは丸めない生の値を返す（丸めは表示直前にrenderMetricBlock側で行う）。
+// 先にここで丸めてしまうと、生産性（生産量÷人工）の計算が丸め誤差を引きずってしまうため。
+function buildNinkuMonthlyActual(s) {
+  const result = {};
+  Object.keys(s.monthlyHoursByCategory).forEach(ym => {
+    result[ym] = {};
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      result[ym][cat] = ninkuFromHours((s.monthlyHoursByCategory[ym] && s.monthlyHoursByCategory[ym][cat]) || 0);
+    });
+  });
+  return result;
+}
+
+// 月次の生産性実績（区分別）＝ 生産量 ÷ 人工。人工が0の月は算出不能として0扱い。
+function buildProductivityMonthlyActual(monthlyVolume, monthlyNinku, monthKeys) {
+  const result = {};
+  monthKeys.forEach(ym => {
+    result[ym] = {};
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      const vol = (monthlyVolume[ym] && monthlyVolume[ym][cat]) || 0;
+      const ninku = (monthlyNinku[ym] && monthlyNinku[ym][cat]) || 0;
+      result[ym][cat] = ninku > 0 ? round2(vol / ninku) : 0;
+    });
+  });
+  return result;
+}
+
+// 生産性の月次計画＝生産量の計画 ÷ 人工の計画（人工計画が未設定の場合は算出しない）
+function getMonthlyTargetProductivity(site, ym, category) {
+  const volTarget = getMonthlyTarget(site, ym, category);
+  const ninkuTarget = getMonthlyTargetNinku(site, ym, category);
+  return ninkuTarget > 0 ? round2(volTarget / ninkuTarget) : 0;
+}
+
+// ============================================================
+// タブ表示
+// ============================================================
+function buildTabs() {
+  const nav = document.getElementById('tabNav');
+  nav.innerHTML = '';
+  const names = ['全体', ...CONFIG.SITES, '年間累計'];
+  names.forEach(name => {
+    const btn = document.createElement('button');
+    btn.textContent = name;
+    btn.onclick = () => showTab(name);
+    btn.id = 'tabbtn_' + name;
+    nav.appendChild(btn);
+  });
+}
+
+function showTab(name) {
+  document.querySelectorAll('#tabNav button').forEach(b => b.classList.remove('active'));
+  const activeBtn = document.getElementById('tabbtn_' + name);
+  if (activeBtn) activeBtn.classList.add('active');
+
+  const el = document.getElementById('tabContent');
+  if (name === '年間累計') {
+    el.innerHTML = renderExecutivePage(SUMMARY.overall);
+  } else if (name === '全体') {
+    el.innerHTML = renderSitePage('全体', SUMMARY.overall);
+  } else {
+    const s = SUMMARY.bySite[name] || emptySiteSummary();
+    el.innerHTML = renderSitePage(name, s);
+  }
+}
+
+// 月次の計画・実績を集計し、区分ごとの累計進捗率も算出する
+// （7/14議事録モックアップ準拠：進捗率は月ごとではなく「合計」に対して1つだけ算出）
+// monthlyActualByYm / targetFn を差し替えることで、生産量・人工・生産性のいずれにも使う
+function computeMonthlyTotals(name, monthKeys, monthlyActualByYm, targetFn) {
+  const totals = {};
+  CONFIG.PROGRESS_CATEGORIES.forEach(c => { totals[c] = { target: 0, actual: 0 }; });
+  monthKeys.forEach(ym => {
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      const actual = (monthlyActualByYm[ym] && monthlyActualByYm[ym][cat]) || 0;
+      const target = targetFn(name, ym, cat);
+      totals[cat].target += target;
+      totals[cat].actual += actual;
+    });
+  });
+  return totals;
+}
+
+// 生産量／人工／生産性、共通の1ブロック（区分別実績表＋月次計画実績表＋進捗率バー）を描画する
+// 案2（2026/8/10打ち合わせで確定）：同じ表構成を3指標分、縦に並べる
+function renderMetricBlock(name, s, opts) {
+  let html = '<div class="metricBlockTitle">' + opts.title + '</div>';
+
+  const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
+  html += '<h2>直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
+  html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+  html += '<tr class="weekRow"><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
+    const v = opts.weeklyFn(c);
+    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
+  }).join('') + '</tr>';
+  html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
+    const v = opts.cumulativeFn(c);
+    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
   }).join('') + '</tr>';
   html += '</table></div>';
 
+  // --- 月次 計画／実績（横長表：7/14議事録モックアップ準拠） ---
+  // 表示する月は年度（CONFIG.FISCAL_YEAR_START_YM〜FISCAL_YEAR_END_YM）で固定し、
+  // それ以外の月にデータがあっても表には出さない。
+  // 「全体」タブは現場ごとの計画値がまだ揃っていないため、計画列・進捗率は表示せず実績のみ表示する。
+  const showTargets = name !== '全体';
+  const monthKeys = generateFiscalYearMonths();
+  const totals = computeMonthlyTotals(name, monthKeys, opts.monthlyActualByYm, opts.targetFn);
+  html += '<h2>' + (showTargets ? '月次 計画／実績' : '月次 実績') + '</h2>';
+  html += '<div class="table-scroll"><table>';
+  if (showTargets) {
+    html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
+    html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
+    monthKeys.forEach(ym => {
+      html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+        const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
+        const target = opts.targetFn(name, ym, cat);
+        return '<td class="num">' + opts.round(target) + '</td><td class="num">' + opts.round(actual) + '</td>';
+      }).join('') + '</tr>';
+    });
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
+      '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
+    ).join('') + '</tr>';
+    // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
+    html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+      const pct = totals[cat].target > 0 ? roundDisplay((totals[cat].actual / totals[cat].target) * 100) : null;
+      return '<td colspan="2" class="pct-cell">' + (pct === null ? '-' : pct + '%') + '</td>';
+    }).join('') + '</tr>';
+  } else {
+    html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+    monthKeys.forEach(ym => {
+      html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+        const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
+        return '<td class="num">' + opts.round(actual) + '</td>';
+      }).join('') + '</tr>';
+    });
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
+      '<td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
+    ).join('') + '</tr>';
+  }
+  html += '</table></div>';
+
   // --- 進捗率バー（区分ごとに個別ボックス：モックアップ準拠） ---
-  html += '<h2>進捗率（累計・区分別）</h2>';
-  CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
-    const hasTarget = totals[cat].target > 0;
-    const pct = hasTarget ? Math.round((totals[cat].actual / totals[cat].target) * 1000) / 10 : 0;
-    const widthPct = Math.min(pct, 100);
-    const overClass = pct >= 100 ? ' over' : '';
-    html += '<div class="progressRow">' +
-      '<div class="progressLabel">' + cat + '</div>' +
-      '<div class="progressBarWrap"><div class="progressBarFill' + overClass + '" style="width:' + widthPct + '%"></div>' +
-      '<span class="progressPctLabel">' + (hasTarget ? pct + '%' : '計画未設定') + '</span></div>' +
-      '</div>';
-  });
+  // 計画値のない「全体」タブでは、進捗率バーも意味を持たないため表示しない。
+  if (showTargets) {
+    html += '<h2>進捗率（累計・区分別）</h2>';
+    CONFIG.PROGRESS_CATEGORIES.forEach(cat => {
+      const hasTarget = totals[cat].target > 0;
+      const pct = hasTarget ? roundDisplay((totals[cat].actual / totals[cat].target) * 100) : 0;
+      const widthPct = Math.min(pct, 100);
+      const overClass = pct >= 100 ? ' over' : '';
+      html += '<div class="progressRow">' +
+        '<div class="progressLabel">' + cat + '</div>' +
+        '<div class="progressBarWrap"><div class="progressBarFill' + overClass + '" style="width:' + widthPct + '%"></div>' +
+        '<span class="progressPctLabel">' + (hasTarget ? pct + '%' : '計画未設定') + '</span></div>' +
+        '</div>';
+    });
+  }
 
   return html;
 }
@@ -39,11 +573,11 @@ function renderSitePage(name, s) {
   // --- 生産量（案2：3ブロック構成の1つ目） ---
   html += renderMetricBlock(name, s, {
     title: '生産量（㎥）',
-    weeklyFn: cat => s.recentWeekByCategory[cat] || 0,
-    cumulativeFn: cat => s.cumulativeByCategory[cat] || 0,
+    weeklyFn: cat => roundDisplay(s.recentWeekByCategory[cat] || 0),
+    cumulativeFn: cat => roundDisplay(s.cumulativeByCategory[cat] || 0),
     monthlyActualByYm: s.monthlyByCategory,
     targetFn: getMonthlyTarget,
-    round: v => v,
+    round: roundDisplay,
   });
 
   html += '<div class="metricArrow">↓</div>';
@@ -51,11 +585,11 @@ function renderSitePage(name, s) {
   // --- 人工（＝労働時間 ÷ 8。業務日報集計表_20260312.xlsxの計算式を踏襲） ---
   html += renderMetricBlock(name, s, {
     title: '人工',
-    weeklyFn: cat => round1(ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0)),
-    cumulativeFn: cat => round1(ninkuFromHours(s.hoursByCategory[cat] || 0)),
+    weeklyFn: cat => roundDisplay(ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0)),
+    cumulativeFn: cat => roundDisplay(ninkuFromHours(s.hoursByCategory[cat] || 0)),
     monthlyActualByYm: ninkuMonthlyActual,
     targetFn: getMonthlyTargetNinku,
-    round: round1,
+    round: roundDisplay,
   });
 
   html += '<div class="metricArrow">↓</div>';
@@ -66,23 +600,23 @@ function renderSitePage(name, s) {
     weeklyFn: cat => {
       const vol = s.recentWeekByCategory[cat] || 0;
       const ninku = ninkuFromHours(s.recentWeekHoursByCategory[cat] || 0);
-      return ninku > 0 ? round2(vol / ninku) : null;
+      return ninku > 0 ? roundDisplay(vol / ninku) : null;
     },
     cumulativeFn: cat => {
       const vol = s.cumulativeByCategory[cat] || 0;
       const ninku = ninkuFromHours(s.hoursByCategory[cat] || 0);
-      return ninku > 0 ? round2(vol / ninku) : null;
+      return ninku > 0 ? roundDisplay(vol / ninku) : null;
     },
     monthlyActualByYm: productivityMonthlyActual,
     targetFn: getMonthlyTargetProductivity,
-    round: round2,
+    round: roundDisplay,
   });
 
   // --- 参考：進捗集計には含まない区分（切り捨て伐倒／その他作業） ---
   html += '<h2>参考（進捗集計には含まない）</h2>';
   html += '<div class="table-scroll"><table><tr><th>区分</th><th>累計材積(㎥)</th><th>累計労働時間(h)</th></tr>';
   ['切り捨て伐倒', 'その他作業'].forEach(cat => {
-    html += '<tr><td>' + cat + '</td><td class="num">' + (s.cumulativeByCategory[cat] || 0) + '</td><td class="num">' + (s.hoursByCategory[cat] || 0) + '</td></tr>';
+    html += '<tr><td>' + cat + '</td><td class="num">' + roundDisplay(s.cumulativeByCategory[cat] || 0) + '</td><td class="num">' + roundDisplay(s.hoursByCategory[cat] || 0) + '</td></tr>';
   });
   html += '</table></div>';
 
@@ -92,13 +626,13 @@ function renderSitePage(name, s) {
 function renderExecutivePage(overall) {
   const actual = overall.cumulativeByCategory[CONFIG.ANNUAL_TARGET_CATEGORY] || 0;
   const target = CONFIG.ANNUAL_TARGET_M3;
-  const pct = target > 0 ? Math.round((actual / target) * 1000) / 10 : 0;
-  let html = '<h2>経営者ページ：年間目標の進捗</h2>';
+  const pct = target > 0 ? roundDisplay((actual / target) * 100) : 0;
+  let html = '<h2>年間累計：年間目標の進捗</h2>';
   html += '<div class="note">【留意点】伐倒・集材・造材・運搬は同じ木の工程のため単純合算できません。' +
     'この進捗は「運搬（＝搬出量）」区分の累計を代理指標として使っています。' +
     '集計ルールの是非は酒井社長の確認待ちです。</div>';
   html += '<table><tr><th>年間目標(㎥)</th><th>累計実績(㎥・搬出量ベース)</th><th>進捗率(%)</th></tr>';
-  html += '<tr><td class="num">' + target + '</td><td class="num">' + actual + '</td><td class="num">' + pct + '</td></tr></table>';
+  html += '<tr><td class="num">' + roundDisplay(target) + '</td><td class="num">' + roundDisplay(actual) + '</td><td class="num">' + pct + '</td></tr></table>';
   return html;
 }
 
