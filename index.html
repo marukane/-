@@ -176,6 +176,10 @@ const CONFIG = {
   FISCAL_YEAR_START_YM: '2026-05',
   FISCAL_YEAR_END_YM: '2027-04',
 
+  // 集計対象とするデータの開始日。この日より前の日報（前年度以前のデータ等）は、
+  // 累計実績・月次実績・直近1週間実績など、すべての集計から除外する。
+  DATA_START_DATE: '2026-05-01',
+
   // パスワードのSHA-256ハッシュ（平文パスワードは書かない）。
   CORRECT_HASH: '98964da49d0a98402ed3d2d37b3350cf0aa346f522f8f1feb6b01cd680bc9455',
 };
@@ -256,6 +260,8 @@ function buildEntries(rows) {
   rows.forEach(row => {
     const date = normalizeDate(row['日付']);
     if (!date) return;
+    // 集計開始日より前のデータ（前年度以前の日報など）はすべての集計から除外する
+    if (CONFIG.DATA_START_DATE && date < CONFIG.DATA_START_DATE) return;
     if (row['①作業内容']) {
       entries.push(makeEntry(
         date,
