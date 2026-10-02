@@ -31,7 +31,12 @@ jobs:
 
       - name: incoming内の最新CSVをdata.csvにコピー
         run: |
-          latest=$(ls -t incoming/*.csv | head -n 1)
+          # ファイル名（例：業務日報_20261002-080139.csv）には日付・時刻が
+          # 含まれており、文字列として並べ替えれば日付順になる。
+          # git checkout直後はファイルの更新時刻（mtime）が実際のアップロード順と
+          # 一致しないことがあるため、ls -t（更新時刻順）ではなくファイル名順で
+          # 最新ファイルを判定する。
+          latest=$(ls incoming/*.csv | sort | tail -n 1)
           echo "最新ファイル: $latest"
           cp "$latest" data.csv
           echo "LATEST_FILE=$latest" >> "$GITHUB_ENV"
