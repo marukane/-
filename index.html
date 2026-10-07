@@ -44,6 +44,7 @@
   td.pct-cell { text-align: center !important; font-weight: bold; }
   tr.weekRow td, tr.weekRow th { background: #fff3b0; }
   tr.evenMonthRow td, tr.evenMonthRow th { background: #d6edf7; }
+  .weightSub { font-size: 11px; color: #888; font-weight: normal; }
   h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
   .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
 
@@ -181,6 +182,16 @@ const CONFIG = {
   // 累計実績・月次実績・直近1週間実績など、すべての集計から除外する。
   DATA_START_DATE: '2026-05-01',
 
+  // 運搬（㎥）をt（トン）に換算するための現場ごとの係数（㎥あたりのt数）。
+  // 樹種・含水率により現場ごとに異なるため、現場名ごとに指定する。
+  // ここに指定のない現場は DEFAULT_WEIGHT_FACTOR を使う。
+  // 【暫定値】設楽町段戸国有林・御内市有林以外は仮で1.0を使用中。確定次第ここを更新する。
+  WEIGHT_FACTOR_BY_SITE: {
+    '設楽町段戸国有林': 1.3,
+    '御内市有林': 1.0,
+  },
+  DEFAULT_WEIGHT_FACTOR: 1.0,
+
   // パスワードのSHA-256ハッシュ（平文パスワードは書かない）。
   CORRECT_HASH: '98964da49d0a98402ed3d2d37b3350cf0aa346f522f8f1feb6b01cd680bc9455',
 };
@@ -293,14 +304,25 @@ function parseHoursField(raw) {
   return parseFloat(raw) || 0;
 }
 
+// 現場名から運搬（㎥→t換算）係数を引く。指定のない現場はDEFAULT_WEIGHT_FACTORを使う。
+function getWeightFactor(site) {
+  if (CONFIG.WEIGHT_FACTOR_BY_SITE && Object.prototype.hasOwnProperty.call(CONFIG.WEIGHT_FACTOR_BY_SITE, site)) {
+    return CONFIG.WEIGHT_FACTOR_BY_SITE[site];
+  }
+  return CONFIG.DEFAULT_WEIGHT_FACTOR;
+}
+
 function makeEntry(date, site, categoryRaw, volumeStr, hoursStr) {
   const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
+  const siteName = site || '(不明)';
+  const volume = parseFloat(volumeStr) || 0;
   return {
     date: date,
-    site: site || '(不明)',
+    site: siteName,
     categoryRaw: categoryRaw,
     category: category,
-    volume: parseFloat(volumeStr) || 0,
+    volume: volume,
+    weight: volume * getWeightFactor(siteName), // 運搬のt換算表示用（他区分では未使用）
     hours: parseHoursField(hoursStr),
   };
 }
@@ -316,6 +338,9 @@ function emptySiteSummary() {
     hoursByCategory: {},
     recentWeekHoursByCategory: {}, // 直近1週間の労働時間（人工・生産性の週次表示用）
     monthlyHoursByCategory: {},    // 月次の労働時間（人工・生産性の月次表示用）
+    recentWeekWeightByCategory: {}, // 直近1週間の重量（t）実績（運搬のt表示用）
+    cumulativeWeightByCategory: {}, // 累計の重量（t）実績
+    monthlyWeightByCategory: {},    // 月次の重量（t）実績
   };
 }
 
@@ -349,10 +374,12 @@ function aggregate(entries) {
 
       target.cumulativeByCategory[e.category] = (target.cumulativeByCategory[e.category] || 0) + e.volume;
       target.hoursByCategory[e.category] = (target.hoursByCategory[e.category] || 0) + e.hours;
+      target.cumulativeWeightByCategory[e.category] = (target.cumulativeWeightByCategory[e.category] || 0) + e.weight;
 
       if (e.date >= weekStartDate && e.date <= latestDate) {
         target.recentWeekByCategory[e.category] = (target.recentWeekByCategory[e.category] || 0) + e.volume;
         target.recentWeekHoursByCategory[e.category] = (target.recentWeekHoursByCategory[e.category] || 0) + e.hours;
+        target.recentWeekWeightByCategory[e.category] = (target.recentWeekWeightByCategory[e.category] || 0) + e.weight;
       }
 
       const ym = e.date.slice(0, 7);
@@ -360,6 +387,8 @@ function aggregate(entries) {
       target.monthlyByCategory[ym][e.category] = (target.monthlyByCategory[ym][e.category] || 0) + e.volume;
       if (!target.monthlyHoursByCategory[ym]) target.monthlyHoursByCategory[ym] = {};
       target.monthlyHoursByCategory[ym][e.category] = (target.monthlyHoursByCategory[ym][e.category] || 0) + e.hours;
+      if (!target.monthlyWeightByCategory[ym]) target.monthlyWeightByCategory[ym] = {};
+      target.monthlyWeightByCategory[ym][e.category] = (target.monthlyWeightByCategory[ym][e.category] || 0) + e.weight;
     });
   });
 
@@ -500,11 +529,15 @@ function renderMetricBlock(name, s, opts) {
   html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
   html += '<tr class="weekRow"><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
     const v = opts.weeklyFn(c);
-    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
+    const w = opts.weeklyWeightFn ? opts.weeklyWeightFn(c) : null;
+    const extra = (w !== null && w !== undefined) ? '<br><span class="weightSub">(' + w + 't)</span>' : '';
+    return '<td class="num">' + (v === null ? '-' : v) + extra + '</td>';
   }).join('') + '</tr>';
   html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
     const v = opts.cumulativeFn(c);
-    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
+    const w = opts.cumulativeWeightFn ? opts.cumulativeWeightFn(c) : null;
+    const extra = (w !== null && w !== undefined) ? '<br><span class="weightSub">(' + w + 't)</span>' : '';
+    return '<td class="num">' + (v === null ? '-' : v) + extra + '</td>';
   }).join('') + '</tr>';
   html += '</table></div>';
 
@@ -525,12 +558,22 @@ function renderMetricBlock(name, s, opts) {
       html += '<tr' + rowClass + '><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
         const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
         const target = opts.targetFn(name, ym, cat);
-        return '<td class="num">' + opts.round(target) + '</td><td class="num">' + opts.round(actual) + '</td>';
+        const w = (opts.monthlyWeightByYm && cat === '運搬') ? ((opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym][cat]) || 0) : null;
+        const actualCell = opts.round(actual) + (w !== null ? '<br><span class="weightSub">(' + opts.round(w) + 't)</span>' : '');
+        return '<td class="num">' + opts.round(target) + '</td><td class="num">' + actualCell + '</td>';
       }).join('') + '</tr>';
     });
-    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
-      '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
-    ).join('') + '</tr>';
+    // 運搬のt換算は月ごとの合計を単純に足し上げる（各月の係数はエントリ単位ですでに反映済み）
+    let totalTransportWeight = 0;
+    if (opts.monthlyWeightByYm) {
+      monthKeys.forEach(ym => {
+        totalTransportWeight += (opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym]['運搬']) || 0;
+      });
+    }
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+      const weightExtra = (cat === '運搬' && opts.monthlyWeightByYm) ? '<br><span class="weightSub">(' + opts.round(totalTransportWeight) + 't)</span>' : '';
+      return '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + weightExtra + '</strong></td>';
+    }).join('') + '</tr>';
     // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
     html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
       const pct = totals[cat].target > 0 ? roundDisplay((totals[cat].actual / totals[cat].target) * 100) : null;
@@ -542,12 +585,21 @@ function renderMetricBlock(name, s, opts) {
       const rowClass = (parseInt(ym.slice(5, 7), 10) % 2 === 0) ? ' class="evenMonthRow"' : '';
       html += '<tr' + rowClass + '><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
         const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
-        return '<td class="num">' + opts.round(actual) + '</td>';
+        const w = (opts.monthlyWeightByYm && cat === '運搬') ? ((opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym][cat]) || 0) : null;
+        const actualCell = opts.round(actual) + (w !== null ? '<br><span class="weightSub">(' + opts.round(w) + 't)</span>' : '');
+        return '<td class="num">' + actualCell + '</td>';
       }).join('') + '</tr>';
     });
-    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
-      '<td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
-    ).join('') + '</tr>';
+    let totalTransportWeightNoTarget = 0;
+    if (opts.monthlyWeightByYm) {
+      monthKeys.forEach(ym => {
+        totalTransportWeightNoTarget += (opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym]['運搬']) || 0;
+      });
+    }
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+      const weightExtra = (cat === '運搬' && opts.monthlyWeightByYm) ? '<br><span class="weightSub">(' + opts.round(totalTransportWeightNoTarget) + 't)</span>' : '';
+      return '<td class="num"><strong>' + opts.round(totals[cat].actual) + weightExtra + '</strong></td>';
+    }).join('') + '</tr>';
   }
   html += '</table></div>';
 
@@ -584,7 +636,11 @@ function renderSitePage(name, s) {
     title: '生産量（㎥）',
     weeklyFn: cat => roundDisplay(s.recentWeekByCategory[cat] || 0),
     cumulativeFn: cat => roundDisplay(s.cumulativeByCategory[cat] || 0),
+    // 運搬のみ、㎥に加えてt（トン）も併記する（現場ごとの換算係数はCONFIG.WEIGHT_FACTOR_BY_SITE参照）
+    weeklyWeightFn: cat => cat === '運搬' ? roundDisplay(s.recentWeekWeightByCategory[cat] || 0) : null,
+    cumulativeWeightFn: cat => cat === '運搬' ? roundDisplay(s.cumulativeWeightByCategory[cat] || 0) : null,
     monthlyActualByYm: s.monthlyByCategory,
+    monthlyWeightByYm: s.monthlyWeightByCategory,
     targetFn: getMonthlyTarget,
     round: roundDisplay,
   });
