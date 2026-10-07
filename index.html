@@ -182,7 +182,8 @@ const CONFIG = {
   // 累計実績・月次実績・直近1週間実績など、すべての集計から除外する。
   DATA_START_DATE: '2026-05-01',
 
-  // 運搬（㎥）をt（トン）に換算するための現場ごとの係数（㎥あたりのt数）。
+  // 運搬のt（トン）表示：CSVに①材積（t）／②材積（t）の実測値があればそれを優先して使う。
+  // 万が一その欄が空欄・0の行だけ、㎥の値に現場ごとの換算係数（㎥あたりのt数）を掛けて代用する。
   // 樹種・含水率により現場ごとに異なるため、現場名ごとに指定する。
   // ここに指定のない現場は DEFAULT_WEIGHT_FACTOR を使う。
   // 【暫定値】設楽町段戸国有林・御内市有林以外は仮で1.0を使用中。確定次第ここを更新する。
@@ -280,7 +281,8 @@ function buildEntries(rows) {
         row['現場名'] || row['現場名（記入）'],
         row['①作業内容'],
         row['①材積（㎥)'] || row['①材積（㎥）'],
-        row['①作業時間']
+        row['①作業時間'],
+        row['①材積（t）'] || row['①材積（t)'] || row['①材積（ｔ）'] || row['①材積（ｔ)']
       ));
     }
     // 「2つ目の作業あり」がfalseでも②作業内容が入っているケースが実データに存在するため、
@@ -291,7 +293,8 @@ function buildEntries(rows) {
         row['現場名2'] || row['現場名(記入)'],
         row['②作業内容'],
         row['②材積（㎥）'],
-        row['②作業時間']
+        row['②作業時間'],
+        row['②材積（t）'] || row['②材積（t)'] || row['②材積（ｔ）'] || row['②材積（ｔ)']
       ));
     }
   });
@@ -312,17 +315,20 @@ function getWeightFactor(site) {
   return CONFIG.DEFAULT_WEIGHT_FACTOR;
 }
 
-function makeEntry(date, site, categoryRaw, volumeStr, hoursStr) {
+function makeEntry(date, site, categoryRaw, volumeStr, hoursStr, weightStr) {
   const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
   const siteName = site || '(不明)';
   const volume = parseFloat(volumeStr) || 0;
+  // 運搬のt表示：CSVに実測のt値があればそれを使い、空欄・0の場合だけ㎥×現場係数で代用する
+  const recordedWeight = parseFloat(weightStr) || 0;
+  const weight = recordedWeight > 0 ? recordedWeight : volume * getWeightFactor(siteName);
   return {
     date: date,
     site: siteName,
     categoryRaw: categoryRaw,
     category: category,
     volume: volume,
-    weight: volume * getWeightFactor(siteName), // 運搬のt換算表示用（他区分では未使用）
+    weight: weight, // 運搬のt表示用（他区分では未使用）
     hours: parseHoursField(hoursStr),
   };
 }
