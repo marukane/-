@@ -43,6 +43,7 @@
   td.num { text-align: right !important; }
   td.pct-cell { text-align: center !important; font-weight: bold; }
   tr.weekRow td, tr.weekRow th { background: #fff3b0; }
+  tr.evenMonthRow td, tr.evenMonthRow th { background: #d6edf7; }
   h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
   .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
 
@@ -520,7 +521,8 @@ function renderMetricBlock(name, s, opts) {
     html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
     html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
     monthKeys.forEach(ym => {
-      html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+      const rowClass = (parseInt(ym.slice(5, 7), 10) % 2 === 0) ? ' class="evenMonthRow"' : '';
+      html += '<tr' + rowClass + '><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
         const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
         const target = opts.targetFn(name, ym, cat);
         return '<td class="num">' + opts.round(target) + '</td><td class="num">' + opts.round(actual) + '</td>';
@@ -537,7 +539,8 @@ function renderMetricBlock(name, s, opts) {
   } else {
     html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
     monthKeys.forEach(ym => {
-      html += '<tr><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
+      const rowClass = (parseInt(ym.slice(5, 7), 10) % 2 === 0) ? ' class="evenMonthRow"' : '';
+      html += '<tr' + rowClass + '><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
         const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
         return '<td class="num">' + opts.round(actual) + '</td>';
       }).join('') + '</tr>';
