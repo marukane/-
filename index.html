@@ -182,16 +182,9 @@ const CONFIG = {
   // 累計実績・月次実績・直近1週間実績など、すべての集計から除外する。
   DATA_START_DATE: '2026-05-01',
 
-  // 運搬のt（トン）表示：CSVに①材積（t）／②材積（t）の実測値があればそれを優先して使う。
-  // 万が一その欄が空欄・0の行だけ、㎥の値に現場ごとの換算係数（㎥あたりのt数）を掛けて代用する。
-  // 樹種・含水率により現場ごとに異なるため、現場名ごとに指定する。
-  // ここに指定のない現場は DEFAULT_WEIGHT_FACTOR を使う。
-  // 【暫定値】設楽町段戸国有林・御内市有林以外は仮で1.0を使用中。確定次第ここを更新する。
-  WEIGHT_FACTOR_BY_SITE: {
-    '設楽町段戸国有林': 1.3,
-    '御内市有林': 1.0,
-  },
-  DEFAULT_WEIGHT_FACTOR: 1.0,
+  // 運搬のt（トン）表示：CSVの①材積（t）／②材積（t）に入力されている実測値をそのまま合計する。
+  // 空欄・0の行は「その回はt数を記録しなかった」という意味なので、0としてそのまま扱う
+  // （㎥の値で埋め合わせたりはしない）。
 
   // パスワードのSHA-256ハッシュ（平文パスワードは書かない）。
   CORRECT_HASH: '98964da49d0a98402ed3d2d37b3350cf0aa346f522f8f1feb6b01cd680bc9455',
@@ -307,21 +300,12 @@ function parseHoursField(raw) {
   return parseFloat(raw) || 0;
 }
 
-// 現場名から運搬（㎥→t換算）係数を引く。指定のない現場はDEFAULT_WEIGHT_FACTORを使う。
-function getWeightFactor(site) {
-  if (CONFIG.WEIGHT_FACTOR_BY_SITE && Object.prototype.hasOwnProperty.call(CONFIG.WEIGHT_FACTOR_BY_SITE, site)) {
-    return CONFIG.WEIGHT_FACTOR_BY_SITE[site];
-  }
-  return CONFIG.DEFAULT_WEIGHT_FACTOR;
-}
-
 function makeEntry(date, site, categoryRaw, volumeStr, hoursStr, weightStr) {
   const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
   const siteName = site || '(不明)';
   const volume = parseFloat(volumeStr) || 0;
-  // 運搬のt表示：CSVに実測のt値があればそれを使い、空欄・0の場合だけ㎥×現場係数で代用する
-  const recordedWeight = parseFloat(weightStr) || 0;
-  const weight = recordedWeight > 0 ? recordedWeight : volume * getWeightFactor(siteName);
+  // 運搬のt表示：CSVの実測値をそのまま使う（空欄・0はそのまま0。㎥での埋め合わせはしない）
+  const weight = parseFloat(weightStr) || 0;
   return {
     date: date,
     site: siteName,
