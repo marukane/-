@@ -543,6 +543,12 @@ function computeMonthlyTotals(name, monthKeys, monthlyActualByYm, targetFn) {
 
 // 生産量／人工／生産性、共通の1ブロック（区分別実績表＋月次計画実績表＋進捗率バー）を描画する
 // 案2（2026/8/10打ち合わせで確定）：同じ表構成を3指標分、縦に並べる
+// 表の見出しに使う表示ラベル。運搬は材＋チップの合算値であることが分かるよう明記する
+// （データ参照に使うキー自体は'運搬'のまま変えない）
+function categoryLabel(cat) {
+  return cat === '運搬' ? '運搬（材＋チップ）' : cat;
+}
+
 function renderMetricBlock(name, s, opts) {
   let html = '<div class="metricBlockTitle">' + opts.title + '</div>';
 
@@ -553,7 +559,7 @@ function renderMetricBlock(name, s, opts) {
 
   const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
   html += '<h2>直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
-  html += '<div class="table-scroll"><table><tr><th>区分</th>' + weekColumns.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+  html += '<div class="table-scroll"><table><tr><th>区分</th>' + weekColumns.map(c => '<th>' + categoryLabel(c) + '</th>').join('') + '</tr>';
   html += '<tr class="weekRow"><td>直近1週間実績</td>' + weekColumns.map(c => {
     const v = opts.weeklyFn(c);
     return '<td class="num">' + (v === null ? '-' : v) + '</td>';
@@ -574,7 +580,7 @@ function renderMetricBlock(name, s, opts) {
   html += '<h2>' + (showTargets ? '月次 計画／実績' : '月次 実績') + '</h2>';
   html += '<div class="table-scroll"><table>';
   if (showTargets) {
-    html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + c + '</th>').join('') + '</tr>';
+    html += '<tr><th></th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th colspan="2">' + categoryLabel(c) + '</th>').join('') + '</tr>';
     html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(() => '<th>計画</th><th>実績</th>').join('') + '</tr>';
     monthKeys.forEach(ym => {
       const rowClass = (parseInt(ym.slice(5, 7), 10) % 2 === 0) ? ' class="evenMonthRow"' : '';
@@ -593,7 +599,7 @@ function renderMetricBlock(name, s, opts) {
       return '<td colspan="2" class="pct-cell">' + (pct === null ? '-' : pct + '%') + '</td>';
     }).join('') + '</tr>';
   } else {
-    html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+    html += '<tr><th>月</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + categoryLabel(c) + '</th>').join('') + '</tr>';
     monthKeys.forEach(ym => {
       const rowClass = (parseInt(ym.slice(5, 7), 10) % 2 === 0) ? ' class="evenMonthRow"' : '';
       html += '<tr' + rowClass + '><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
@@ -617,7 +623,7 @@ function renderMetricBlock(name, s, opts) {
       const widthPct = Math.min(pct, 100);
       const overClass = pct >= 100 ? ' over' : '';
       html += '<div class="progressRow">' +
-        '<div class="progressLabel">' + cat + '</div>' +
+        '<div class="progressLabel">' + categoryLabel(cat) + '</div>' +
         '<div class="progressBarWrap"><div class="progressBarFill' + overClass + '" style="width:' + widthPct + '%"></div>' +
         '<span class="progressPctLabel">' + (hasTarget ? pct + '%' : '計画未設定') + '</span></div>' +
         '</div>';
