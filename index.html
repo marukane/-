@@ -49,6 +49,14 @@
   h2 { font-size: 16px; border-left: 4px solid #7cb342; padding-left: 8px; margin-top: 28px; }
   .note { background: #fff8e1; border: 1px solid #f0e0a0; padding: 10px 14px; font-size: 13px; margin-bottom: 16px; }
 
+  /* 現場実績見出し横の「確定値」入力欄（自動計算ではなく手入力の数値をそのまま表示する） */
+  .confirmedValueWrap { font-size: 14px; font-weight: normal; margin-left: 16px; color: #333; white-space: nowrap; }
+  .confirmedValueInput {
+    color: #1a56db; font-weight: bold; font-size: 15px; text-align: center;
+    border: none; border-bottom: 1px dashed #1a56db; background: transparent; width: 64px;
+  }
+  .confirmedValueInput:focus { outline: none; border-bottom: 1px solid #1a56db; }
+
   /* 生産量／人工／生産性：3ブロックを縦に並べる（案2レイアウト） */
   .metricBlockTitle {
     font-size: 17px; font-weight: bold; background: #2f7d5c; color: #fff;
@@ -186,6 +194,12 @@ const CONFIG = {
   // 運搬のt（トン）表示：CSVの①材積（t）／②材積（t）に入力されている実測値をそのまま合計する。
   // 空欄・0の行は「その回はt数を記録しなかった」という意味なので、0としてそのまま扱う
   // （㎥の値で埋め合わせたりはしない）。
+
+  // 現場実績見出し横の「確定値」欄の初期表示値。【手入力】自動計算はしない。
+  // 一度入力・変更されるとブラウザに記憶され、以後はそちらが優先される。
+  CONFIRMED_VALUE_DEFAULTS: {
+    '御内市有林': 39,
+  },
 
   // パスワードのSHA-256ハッシュ（平文パスワードは書かない）。
   CORRECT_HASH: '98964da49d0a98402ed3d2d37b3350cf0aa346f522f8f1feb6b01cd680bc9455',
@@ -613,12 +627,27 @@ function renderMetricBlock(name, s, opts) {
   return html;
 }
 
+// 「確定値」欄：自動計算はせず、手入力された数値をそのままブラウザに保存・表示する
+function saveConfirmedValue(site, value) {
+  try { localStorage.setItem('confirmedValue_' + site, value); } catch (e) { /* 保存できない環境は無視 */ }
+}
+function loadConfirmedValue(site) {
+  try {
+    const saved = localStorage.getItem('confirmedValue_' + site);
+    if (saved !== null) return saved;
+  } catch (e) { /* 読み込めない環境は無視 */ }
+  const def = CONFIG.CONFIRMED_VALUE_DEFAULTS && CONFIG.CONFIRMED_VALUE_DEFAULTS[site];
+  return (def !== undefined) ? String(def) : '';
+}
+
 function renderSitePage(name, s) {
   const monthKeys = Object.keys(s.monthlyByCategory).sort();
   const ninkuMonthlyActual = buildNinkuMonthlyActual(s);
   const productivityMonthlyActual = buildProductivityMonthlyActual(s.monthlyByCategory, ninkuMonthlyActual, monthKeys);
 
-  let html = '<h2>' + name + '：現場実績</h2>';
+  const confirmedVal = loadConfirmedValue(name);
+  let html = '<h2>' + name + '：現場実績 <span class="confirmedValueWrap">確定値：<input type="text" class="confirmedValueInput" value="' +
+    confirmedVal + '" oninput="saveConfirmedValue(\'' + name + '\', this.value)">㎥</span></h2>';
   html += '<div class="note">データ最終更新日：' + (s.latestDate || '-') + '</div>';
 
   // --- 生産量（案2：3ブロック構成の1つ目） ---
