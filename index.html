@@ -301,19 +301,27 @@ function parseHoursField(raw) {
   return parseFloat(raw) || 0;
 }
 
+// 運搬のチップ（t）を㎥相当に換算するための密度。
+// 現場名に「国有林」を含む現場は1㎥＝1.3t、それ以外は1㎥＝1tとして扱う。
+function getChipDensity(site) {
+  return (site && site.indexOf('国有林') !== -1) ? 1.3 : 1.0;
+}
+
 function makeEntry(date, site, categoryRaw, volumeStr, hoursStr, weightStr) {
   const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
   const siteName = site || '(不明)';
-  const volume = parseFloat(volumeStr) || 0;
-  // 運搬のt表示：CSVの実測値をそのまま使う（空欄・0はそのまま0。㎥での埋め合わせはしない）
-  const weight = parseFloat(weightStr) || 0;
+  const volume = parseFloat(volumeStr) || 0; // 運搬（材）：㎥の生データ
+  const weight = parseFloat(weightStr) || 0; // 運搬（チップ）：tの生データ（空欄・0はそのまま0）
+  // 生産量・月次計画／実績・進捗率・年間累計向けの合算㎥（材の㎥＋チップをt→㎥換算したもの）
+  const combinedVolume = volume + (weight / getChipDensity(siteName));
   return {
     date: date,
     site: siteName,
     categoryRaw: categoryRaw,
     category: category,
     volume: volume,
-    weight: weight, // 運搬のt表示用（他区分では未使用）
+    weight: weight,
+    combinedVolume: combinedVolume,
     hours: parseHoursField(hoursStr),
   };
 }
@@ -329,9 +337,12 @@ function emptySiteSummary() {
     hoursByCategory: {},
     recentWeekHoursByCategory: {}, // 直近1週間の労働時間（人工・生産性の週次表示用）
     monthlyHoursByCategory: {},    // 月次の労働時間（人工・生産性の月次表示用）
-    recentWeekWeightByCategory: {}, // 直近1週間の重量（t）実績（運搬のt表示用）
-    cumulativeWeightByCategory: {}, // 累計の重量（t）実績
+    recentWeekWeightByCategory: {}, // 直近1週間の重量（t）実績（運搬（チップ）表示用）
+    cumulativeWeightByCategory: {}, // 累計の重量（t）実績（運搬（チップ）表示用）
     monthlyWeightByCategory: {},    // 月次の重量（t）実績
+    recentWeekRawVolumeByCategory: {}, // 直近1週間の材（㎥）生データ（運搬（材）表示用。換算前）
+    cumulativeRawVolumeByCategory: {}, // 累計の材（㎥）生データ（運搬（材）表示用。換算前）
+    monthlyRawVolumeByCategory: {},    // 月次の材（㎥）生データ
   };
 }
 
@@ -363,23 +374,28 @@ function aggregate(entries) {
       target.weekStartDate = weekStartDate;
       target.weekEndDate = latestDate;
 
-      target.cumulativeByCategory[e.category] = (target.cumulativeByCategory[e.category] || 0) + e.volume;
+      // 生産量・月次計画／実績・進捗率・年間累計向け：運搬は材＋チップ換算の合算㎥（combinedVolume）を積み上げる
+      target.cumulativeByCategory[e.category] = (target.cumulativeByCategory[e.category] || 0) + e.combinedVolume;
       target.hoursByCategory[e.category] = (target.hoursByCategory[e.category] || 0) + e.hours;
       target.cumulativeWeightByCategory[e.category] = (target.cumulativeWeightByCategory[e.category] || 0) + e.weight;
+      target.cumulativeRawVolumeByCategory[e.category] = (target.cumulativeRawVolumeByCategory[e.category] || 0) + e.volume;
 
       if (e.date >= weekStartDate && e.date <= latestDate) {
-        target.recentWeekByCategory[e.category] = (target.recentWeekByCategory[e.category] || 0) + e.volume;
+        target.recentWeekByCategory[e.category] = (target.recentWeekByCategory[e.category] || 0) + e.combinedVolume;
         target.recentWeekHoursByCategory[e.category] = (target.recentWeekHoursByCategory[e.category] || 0) + e.hours;
         target.recentWeekWeightByCategory[e.category] = (target.recentWeekWeightByCategory[e.category] || 0) + e.weight;
+        target.recentWeekRawVolumeByCategory[e.category] = (target.recentWeekRawVolumeByCategory[e.category] || 0) + e.volume;
       }
 
       const ym = e.date.slice(0, 7);
       if (!target.monthlyByCategory[ym]) target.monthlyByCategory[ym] = {};
-      target.monthlyByCategory[ym][e.category] = (target.monthlyByCategory[ym][e.category] || 0) + e.volume;
+      target.monthlyByCategory[ym][e.category] = (target.monthlyByCategory[ym][e.category] || 0) + e.combinedVolume;
       if (!target.monthlyHoursByCategory[ym]) target.monthlyHoursByCategory[ym] = {};
       target.monthlyHoursByCategory[ym][e.category] = (target.monthlyHoursByCategory[ym][e.category] || 0) + e.hours;
       if (!target.monthlyWeightByCategory[ym]) target.monthlyWeightByCategory[ym] = {};
       target.monthlyWeightByCategory[ym][e.category] = (target.monthlyWeightByCategory[ym][e.category] || 0) + e.weight;
+      if (!target.monthlyRawVolumeByCategory[ym]) target.monthlyRawVolumeByCategory[ym] = {};
+      target.monthlyRawVolumeByCategory[ym][e.category] = (target.monthlyRawVolumeByCategory[ym][e.category] || 0) + e.volume;
     });
   });
 
@@ -515,20 +531,21 @@ function computeMonthlyTotals(name, monthKeys, monthlyActualByYm, targetFn) {
 function renderMetricBlock(name, s, opts) {
   let html = '<div class="metricBlockTitle">' + opts.title + '</div>';
 
+  // 生産量ブロックのみ、運搬を「運搬（材）」㎥と「運搬（チップ）」tの2列に分けて生データを表示する
+  const weekColumns = opts.splitTransport
+    ? CONFIG.PROGRESS_CATEGORIES.flatMap(c => c === '運搬' ? ['運搬（材）', '運搬（チップ）'] : [c])
+    : CONFIG.PROGRESS_CATEGORIES;
+
   const weekLabel = s.weekStartDate && s.weekEndDate ? (s.weekStartDate + '〜' + s.weekEndDate) : '-';
   html += '<h2>直近1週間の実績（' + weekLabel + '）／累計実績</h2>';
-  html += '<div class="table-scroll"><table><tr><th>区分</th>' + CONFIG.PROGRESS_CATEGORIES.map(c => '<th>' + c + '</th>').join('') + '</tr>';
-  html += '<tr class="weekRow"><td>直近1週間実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
+  html += '<div class="table-scroll"><table><tr><th>区分</th>' + weekColumns.map(c => '<th>' + c + '</th>').join('') + '</tr>';
+  html += '<tr class="weekRow"><td>直近1週間実績</td>' + weekColumns.map(c => {
     const v = opts.weeklyFn(c);
-    const w = opts.weeklyWeightFn ? opts.weeklyWeightFn(c) : null;
-    const extra = (w !== null && w !== undefined) ? '<br><span class="weightSub">(' + w + 't)</span>' : '';
-    return '<td class="num">' + (v === null ? '-' : v) + extra + '</td>';
+    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
   }).join('') + '</tr>';
-  html += '<tr><td>累計実績</td>' + CONFIG.PROGRESS_CATEGORIES.map(c => {
+  html += '<tr><td>累計実績</td>' + weekColumns.map(c => {
     const v = opts.cumulativeFn(c);
-    const w = opts.cumulativeWeightFn ? opts.cumulativeWeightFn(c) : null;
-    const extra = (w !== null && w !== undefined) ? '<br><span class="weightSub">(' + w + 't)</span>' : '';
-    return '<td class="num">' + (v === null ? '-' : v) + extra + '</td>';
+    return '<td class="num">' + (v === null ? '-' : v) + '</td>';
   }).join('') + '</tr>';
   html += '</table></div>';
 
@@ -549,22 +566,12 @@ function renderMetricBlock(name, s, opts) {
       html += '<tr' + rowClass + '><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
         const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
         const target = opts.targetFn(name, ym, cat);
-        const w = (opts.monthlyWeightByYm && cat === '運搬') ? ((opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym][cat]) || 0) : null;
-        const actualCell = opts.round(actual) + (w !== null ? '<br><span class="weightSub">(' + opts.round(w) + 't)</span>' : '');
-        return '<td class="num">' + opts.round(target) + '</td><td class="num">' + actualCell + '</td>';
+        return '<td class="num">' + opts.round(target) + '</td><td class="num">' + opts.round(actual) + '</td>';
       }).join('') + '</tr>';
     });
-    // 運搬のt換算は月ごとの合計を単純に足し上げる（各月の係数はエントリ単位ですでに反映済み）
-    let totalTransportWeight = 0;
-    if (opts.monthlyWeightByYm) {
-      monthKeys.forEach(ym => {
-        totalTransportWeight += (opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym]['運搬']) || 0;
-      });
-    }
-    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
-      const weightExtra = (cat === '運搬' && opts.monthlyWeightByYm) ? '<br><span class="weightSub">(' + opts.round(totalTransportWeight) + 't)</span>' : '';
-      return '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + weightExtra + '</strong></td>';
-    }).join('') + '</tr>';
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
+      '<td class="num"><strong>' + opts.round(totals[cat].target) + '</strong></td><td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
+    ).join('') + '</tr>';
     // 進捗率は合計に対して区分ごとに1つだけ（月ごとには出さない）
     html += '<tr><td>進捗率</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
       const pct = totals[cat].target > 0 ? roundDisplay((totals[cat].actual / totals[cat].target) * 100) : null;
@@ -576,21 +583,12 @@ function renderMetricBlock(name, s, opts) {
       const rowClass = (parseInt(ym.slice(5, 7), 10) % 2 === 0) ? ' class="evenMonthRow"' : '';
       html += '<tr' + rowClass + '><td>' + ym + '</td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
         const actual = (opts.monthlyActualByYm[ym] && opts.monthlyActualByYm[ym][cat]) || 0;
-        const w = (opts.monthlyWeightByYm && cat === '運搬') ? ((opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym][cat]) || 0) : null;
-        const actualCell = opts.round(actual) + (w !== null ? '<br><span class="weightSub">(' + opts.round(w) + 't)</span>' : '');
-        return '<td class="num">' + actualCell + '</td>';
+        return '<td class="num">' + opts.round(actual) + '</td>';
       }).join('') + '</tr>';
     });
-    let totalTransportWeightNoTarget = 0;
-    if (opts.monthlyWeightByYm) {
-      monthKeys.forEach(ym => {
-        totalTransportWeightNoTarget += (opts.monthlyWeightByYm[ym] && opts.monthlyWeightByYm[ym]['運搬']) || 0;
-      });
-    }
-    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat => {
-      const weightExtra = (cat === '運搬' && opts.monthlyWeightByYm) ? '<br><span class="weightSub">(' + opts.round(totalTransportWeightNoTarget) + 't)</span>' : '';
-      return '<td class="num"><strong>' + opts.round(totals[cat].actual) + weightExtra + '</strong></td>';
-    }).join('') + '</tr>';
+    html += '<tr><td><strong>合計</strong></td>' + CONFIG.PROGRESS_CATEGORIES.map(cat =>
+      '<td class="num"><strong>' + opts.round(totals[cat].actual) + '</strong></td>'
+    ).join('') + '</tr>';
   }
   html += '</table></div>';
 
@@ -625,13 +623,20 @@ function renderSitePage(name, s) {
   // --- 生産量（案2：3ブロック構成の1つ目） ---
   html += renderMetricBlock(name, s, {
     title: '生産量（㎥）',
-    weeklyFn: cat => roundDisplay(s.recentWeekByCategory[cat] || 0),
-    cumulativeFn: cat => roundDisplay(s.cumulativeByCategory[cat] || 0),
-    // 運搬のみ、㎥に加えてt（トン）も併記する（現場ごとの換算係数はCONFIG.WEIGHT_FACTOR_BY_SITE参照）
-    weeklyWeightFn: cat => cat === '運搬' ? roundDisplay(s.recentWeekWeightByCategory[cat] || 0) : null,
-    cumulativeWeightFn: cat => cat === '運搬' ? roundDisplay(s.cumulativeWeightByCategory[cat] || 0) : null,
+    // 直近1週間実績／累計実績の表だけ、運搬を「運搬（材）」㎥と「運搬（チップ）」tの生データに分けて表示する
+    splitTransport: true,
+    weeklyFn: col => {
+      if (col === '運搬（材）') return roundDisplay(s.recentWeekRawVolumeByCategory['運搬'] || 0);
+      if (col === '運搬（チップ）') return roundDisplay(s.recentWeekWeightByCategory['運搬'] || 0);
+      return roundDisplay(s.recentWeekByCategory[col] || 0);
+    },
+    cumulativeFn: col => {
+      if (col === '運搬（材）') return roundDisplay(s.cumulativeRawVolumeByCategory['運搬'] || 0);
+      if (col === '運搬（チップ）') return roundDisplay(s.cumulativeWeightByCategory['運搬'] || 0);
+      return roundDisplay(s.cumulativeByCategory[col] || 0);
+    },
+    // 月次 計画／実績・進捗率・年間累計は、運搬＝材（㎥）＋チップ（t→㎥換算）の合算値を使う
     monthlyActualByYm: s.monthlyByCategory,
-    monthlyWeightByYm: s.monthlyWeightByCategory,
     targetFn: getMonthlyTarget,
     round: roundDisplay,
   });
