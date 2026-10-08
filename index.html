@@ -36,10 +36,11 @@
   }
   #tabNav button.active { background: #fff; font-weight: bold; border-bottom: 3px solid #7cb342; }
   #tabContent { padding: 16px; max-width: 900px; margin: 0 auto; }
-  table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: right; font-size: 13px; white-space: nowrap; }
-  th { text-align: center; background: #f7f9f7; }
-  th:first-child, td:first-child { text-align: left; }
+  table { border-collapse: collapse; width: 100%; margin-bottom: 20px; table-layout: fixed; }
+  th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: right; font-size: 13px; }
+  td { white-space: nowrap; }
+  th { text-align: center; background: #f7f9f7; white-space: normal; word-break: keep-all; line-height: 1.3; }
+  th:first-child, td:first-child { text-align: left; white-space: nowrap; }
   td.num { text-align: right !important; }
   td.pct-cell { text-align: center !important; font-weight: bold; }
   tr.weekRow td, tr.weekRow th { background: #fff3b0; }
