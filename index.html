@@ -322,9 +322,21 @@ function getChipDensity(site) {
   return (site && site.indexOf('国有林') !== -1) ? 1.3 : 1.0;
 }
 
+// CSVの現場名の表記ゆれ（略称・異体字など）をCONFIG.SITESの正式名称に統一する。
+// 例：「段戸国有林」→「設楽町段戸国有林」、「豊田市刈萱町」→「豊田市苅萱町」
+// （実データでこの表記ゆれにより実績が正しい現場に集計されず表示0になる不具合があったため追加）
+const SITE_NAME_ALIASES = {
+  '段戸国有林': '設楽町段戸国有林',
+  '豊田市刈萱町': '豊田市苅萱町',
+};
+function normalizeSiteName(name) {
+  if (!name) return name;
+  return SITE_NAME_ALIASES[name] || name;
+}
+
 function makeEntry(date, site, categoryRaw, volumeStr, hoursStr, weightStr) {
   const category = CONFIG.CATEGORY_MAP[categoryRaw] || 'その他作業';
-  const siteName = site || '(不明)';
+  const siteName = normalizeSiteName(site) || '(不明)';
   const volume = parseFloat(volumeStr) || 0; // 運搬（材）：㎥の生データ
   const weight = parseFloat(weightStr) || 0; // 運搬（チップ）：tの生データ（空欄・0はそのまま0）
   // 生産量・月次計画／実績・進捗率・年間累計向けの合算㎥（材の㎥＋チップをt→㎥換算したもの）
